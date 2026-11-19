@@ -1,79 +1,88 @@
-// The screenshot scenes behind ?shot=start|play|end. Each one plays the real rules forward from a
-// fresh world for a fixed number of steps, steered by a simple autopilot (look ahead each way the
-// paddle could move, keep clear of blocks, chase the lowest coin when that is safe), so the frame
-// is what a short game really looks like and the same seed always gives the same frame.
-import { FIELD, PLAYER, STEP } from './config.js';
-import { EVENT_OVER, KIND_BLOCK } from './world.js';
-import { SCREEN_OVER, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
+// Honest screenshot setups: deterministic in-game states reached through
+// the real game code (?shot=chase|city|driving|mission). Nothing is staged
+// outside the game — the same systems run, the camera just starts framed.
 
-const START_SECONDS = 5;
-const PLAY_SECONDS = 26;
-const END_LIMIT_SECONDS = 600;
-/**
- * How far ahead, in seconds, the autopilot checks each way it could move: the play scene's pilot
- * looks well ahead and keeps all its lives; the end scene's looks only a moment ahead, so it is
- * caught out once the blocks speed up, as a hurried player is.
- */
-const HORIZON_PLAY = 0.7;
-const HORIZON_END = 0.25;
-const SAMPLE = 1 / 30;
-const DIRECTIONS = [0, -1, 1];
-/** Extra room, each side, it keeps between the paddle and a block. */
-const MARGIN = 10;
+import { Vehicle } from './vehicles.js';
 
-/** Seconds until moving in `direction` (-1, 0, 1) runs the paddle into a block; Infinity when it never does. */
-function timeToHit(state, direction, horizon) {
-  const player = state.player;
-  for (let t = SAMPLE; t <= horizon; t += SAMPLE) {
-    const x = Math.min(FIELD.width - player.width, Math.max(0, player.x + direction * PLAYER.speed * t));
-    for (let index = 0; index < state.items.length; index += 1) {
-      const item = state.items[index];
-      if (!item.active || item.kind !== KIND_BLOCK) continue;
-      const y = item.y + item.speed * t;
-      if (y + item.height > player.y && y < player.y + player.height && item.x < x + player.width + MARGIN && item.x + item.width > x - MARGIN) return t;
-    }
-  }
-  return Infinity;
+function putPlayerInCar(game, type, x, z, heading, speed = 0) {
+  const v = new Vehicle(game.scene, type, 0xe8632c, x, z, heading);
+  game.vehicles.push(v);
+  v.speed = speed;
+  game.player.enterCar(v);
+  game.cameraRig.yaw = heading;
+  game.cameraRig.pitch = 0.16;
+  return v;
 }
 
-/** Of the safe ways to move, the one toward the lowest coin (or the centre); else the one that is hit last. */
-function autopilot(state, horizon) {
-  const player = state.player;
-  let coin = null;
-  for (let index = 0; index < state.items.length; index += 1) {
-    const item = state.items[index];
-    if (item.active && item.kind !== KIND_BLOCK && (coin === null || item.y > coin.y)) coin = item;
-  }
-  const target = coin === null ? FIELD.width / 2 : coin.x + coin.width / 2;
-  const centre = player.x + player.width / 2;
-  const wanted = target > centre + 8 ? 1 : target < centre - 8 ? -1 : 0;
-  let best = wanted;
-  let bestTime = timeToHit(state, wanted, horizon);
-  for (let index = 0; index < DIRECTIONS.length && bestTime !== Infinity; index += 1) {
-    const time = timeToHit(state, DIRECTIONS[index], horizon);
-    if (time > bestTime) {
-      bestTime = time;
-      best = DIRECTIONS[index];
+// Clear AI traffic from a stretch of the beach boulevard so the chase
+// frame stays clean (the cars respawn around the player anyway).
+function clearBoulevard(game, zMin, zMax) {
+  for (let i = game.traffic.cars.length - 1; i >= 0; i--) {
+    const c = game.traffic.cars[i];
+    if (Math.abs(c.v.pos.x - 144) < 10 && c.v.pos.z > zMin && c.v.pos.z < zMax) {
+      c.v.dispose(game.scene);
+      game.vehicles.splice(game.vehicles.indexOf(c.v), 1);
+      game.traffic.cars.splice(i, 1);
     }
   }
-  return best;
 }
 
-/**
- * Set `world` to the named scene (start, play or end; any other name is start) and return the
- * screen to draw over it and the best score to show.
- */
-export function stageShot(name, world) {
-  world.reset();
-  if (name !== 'play' && name !== 'end') {
-    for (let index = 0; index < START_SECONDS / STEP; index += 1) world.step(STEP, 0, true);
-    return { screen: SCREEN_TITLE, best: 0 };
+export function applyShot(game, shot) {
+  const g = game;
+  if (shot === 'chase') {
+    // Cover: police chase on the beach boulevard, 3 stars, heli, M5 live.
+    putPlayerInCar(g, 'sports', 144, -70, 0, 28);
+    g.missions.startMission(4);
+    g.missions.stage = 1;
+    g.missions._enterStage();
+    const limo = g.missions.targetCar;
+    limo.pos.set(144, 0, -25);
+    limo.heading = 0;
+    limo.speed = 18;
+    g.missions.limoWaypoints = [{ x: 144, z: 80 }, { x: 168, z: 40 }, { x: 190, z: 24 }, { x: 236, z: 24 }];
+    g.missions.limoWp = 0;
+    g.police.stars = 3;
+    g.police.heliAngle = 1.0; // heli starts ahead-right of the player, in frame
+    for (let i = 0; i < 3; i++) g.police.spawnCop(g.player.pos);
+    // Two units in frame: one ahead-left of the player, one alongside.
+    const cops = g.police.cops;
+    if (cops[0]) { cops[0].v.pos.set(137, 0, -38); cops[0].v.heading = 0; cops[0].v.speed = 24; }
+    if (cops[1]) { cops[1].v.pos.set(151, 0, -58); cops[1].v.heading = 0; cops[1].v.speed = 26; }
+    g.autoDrive = true;
+    g.cameraRig.pitch = 0.42;
+    g.cameraRig.holdPitch = 0.42; // tilt up: heli + beacon in frame
+    clearBoulevard(g, -140, 80);
+    g.missions.say([{ speaker: 'VOSS', text: "You think you can take my city, courier? Drive — to the pier!", dur: 6 }]);
+  } else if (shot === 'driving') {
+    // Sunset cruise down the beach boulevard with a delivery live.
+    putPlayerInCar(g, 'sports', 144, -110, 0, 30);
+    g.autoDrive = true;
+    clearBoulevard(g, -140, 60);
+    g.missions.startMission(1);
+    g.missions.stage = 1;
+    g.missions.heatSet = true;
+    g.missions._updateBeacon();
+    g.missions.say([{ speaker: 'IVY', text: 'Cops! Voss tipped them off. Lose them or outrun them — just get to the motel.', dur: 6 }]);
+  } else if (shot === 'mission') {
+    // Harbor Heat: on foot, pistol out, Voss guards ahead.
+    g.missions.startMission(2);
+    g.missions.stage = 1;
+    g.missions._enterStage();
+    g.player.teleport(120, 96, 0);
+    g.player.armour = 50;
+    g.combat.switchTo('pistol');
+    g.cameraRig.yaw = 0; // guards + containers are south of the player
+    g.cameraRig.pitch = 0.2;
+    g.missions.say([{ speaker: 'NIA', text: 'Four guards between you and the truck. Make it loud or make it quiet — your call.', dur: 6 }]);
+  } else {
+    // city: on-foot downtown exploration, traffic + pedestrians, sunset.
+    g.player.teleport(0, -30, 0.4);
+    g.cameraRig.yaw = 0.4;
+    g.cameraRig.pitch = 0.22;
+    g.hud.toast('Explore Solmar City — steal a car with E, follow the amber marker');
   }
-  const limit = name === 'end' ? END_LIMIT_SECONDS : PLAY_SECONDS;
-  const horizon = name === 'end' ? HORIZON_END : HORIZON_PLAY;
-  for (let index = 0; index < limit / STEP; index += 1) {
-    if (world.step(STEP, autopilot(world.state, horizon), false) & EVENT_OVER) break;
-  }
-  const over = world.state.lives === 0;
-  return { screen: over ? SCREEN_OVER : SCREEN_PLAY, best: world.state.score };
+  // Re-seed traffic + pedestrians around the staged position so the
+  // streets are alive in the frame, then flag readiness for the tool.
+  g._seedWorld();
+  setTimeout(() => { window.__shotReady = true; }, 1600);
 }

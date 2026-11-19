@@ -1,19 +1,123 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Block Dodger</title>
-<style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #11141b; }
-  #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
-  /* Read aloud, never shown: the status line screen readers announce. */
-  #status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-</style>
+<title>SOLMAR HEAT — Open-World Crime in Solmar City</title>
+<link rel="stylesheet" href="./style.css">
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.min.js" } }
+</script>
 </head>
 <body>
-<canvas id="game" aria-label="Block Dodger: move the paddle left and right to dodge falling blocks and catch coins"></canvas>
-<p id="status" role="status" aria-live="polite"></p>
+<div id="game-canvas"></div>
+
+<!-- ============ HUD ============ -->
+<div id="hud" style="display:none">
+  <div id="vignette"></div>
+  <div id="crosshair"><div class="dot"></div></div>
+
+  <div id="mission-panel" class="panel">
+    <div id="mission-name">MISSION 1 — FIRST WHEELS</div>
+    <div id="mission-stage">STAGE 1/2</div>
+    <div id="mission-objective">Steal a car</div>
+    <div id="mission-next">NEXT: Bring it to the garage</div>
+  </div>
+
+  <div id="top-right">
+    <div id="clock">16:00</div>
+    <div id="money">$250</div>
+    <div id="stars"></div>
+  </div>
+
+  <div id="bottom-left">
+    <canvas id="minimap" width="210" height="210"></canvas>
+    <div id="vitals" class="panel">
+      <div class="bar-row"><span class="bar-label">HEALTH</span><div class="bar"><div id="health-fill"></div></div><span id="health-num" class="bar-num">100</span></div>
+      <div class="bar-row"><span class="bar-label">ARMOUR</span><div class="bar"><div id="armour-fill"></div></div><span id="armour-num" class="bar-num">0</span></div>
+    </div>
+  </div>
+
+  <div id="bottom-right">
+    <div id="weapon-slots">
+      <div class="slot" data-weapon="fists"><span class="slot-key">1</span><span class="slot-name">FISTS</span><span class="slot-ammo">∞</span></div>
+      <div class="slot" data-weapon="pistol"><span class="slot-key">2</span><span class="slot-name">P-9 PISTOL</span><span class="slot-ammo">12 / 60</span></div>
+      <div class="slot" data-weapon="smg"><span class="slot-key">3</span><span class="slot-name">VK-9 SMG</span><span class="slot-ammo">LOCKED</span></div>
+    </div>
+    <div id="crew-bar">
+      <div class="crew" data-crew="getaway"><div class="crew-cd"></div><span class="crew-key">Z</span><div><div class="crew-name">GETAWAY</div><div class="crew-who">Ivy — Driver</div></div><span class="crew-secs">READY</span></div>
+      <div class="crew" data-crew="repair"><div class="crew-cd"></div><span class="crew-key">X</span><div><div class="crew-name">QUICK FIX</div><div class="crew-who">Tomas — Mechanic</div></div><span class="crew-secs">READY</span></div>
+      <div class="crew" data-crew="lookout"><div class="crew-cd"></div><span class="crew-key">C</span><div><div class="crew-name">EYES OUT</div><div class="crew-who">Nia — Lookout</div></div><span class="crew-secs">READY</span></div>
+    </div>
+    <div id="speedo" style="display:none">
+      <div id="speed-num">0</div><div class="kmh">KM/H</div>
+      <div id="vehicle-name">Veloce GT</div>
+      <div class="bar"><div id="vehicle-damage-fill"></div></div>
+      <div id="vehicle-damage-num">100% CONDITION</div>
+    </div>
+  </div>
+
+  <div id="dialogue" style="display:none">
+    <div id="dialogue-speaker">TOMAS</div>
+    <div id="dialogue-text"></div>
+  </div>
+
+  <div id="banner"></div>
+  <div id="toast"></div>
+</div>
+
+<!-- ============ START SCREEN ============ -->
+<div id="start-screen">
+  <div class="title-block">
+    <div class="kicker">SOLMAR CITY &bull; SUNSET &bull; NO WAY OUT BUT UP</div>
+    <h1>SOLMAR <span>HEAT</span></h1>
+    <p class="tagline">Dante Reyes came home to drive a courier van. Instead he is going to take the docks back from Aurelio Voss — one stolen car at a time.</p>
+  </div>
+  <div class="menu-buttons">
+    <button id="btn-new" class="big">NEW GAME</button>
+    <button id="btn-continue" class="big ghost" style="display:none">CONTINUE</button>
+    <div id="save-note"></div>
+  </div>
+  <div class="controls panel">
+    <div><b>WASD</b> move / drive</div><div><b>MOUSE</b> look &amp; aim</div>
+    <div><b>SHIFT</b> run</div><div><b>SPACE</b> jump / handbrake</div>
+    <div><b>E</b> enter / exit car</div><div><b>CLICK</b> shoot / punch</div>
+    <div><b>1 2 3</b> weapons</div><div><b>R</b> reload</div>
+    <div><b>Z X C</b> crew call-ins</div><div><b>H</b> horn &nbsp; <b>M</b> mute &nbsp; <b>P</b> pause</div>
+  </div>
+  <div class="foot">5 missions &bull; open city &bull; traffic &amp; pedestrians &bull; wanted levels &amp; police chases &bull; your progress saves automatically</div>
+</div>
+
+<!-- ============ PAUSE ============ -->
+<div id="pause-menu" style="display:none">
+  <div class="menu-box panel">
+    <h2>PAUSED</h2>
+    <button id="btn-resume" class="big">RESUME</button>
+    <button id="btn-save" class="big ghost">SAVE GAME</button>
+    <button id="btn-restart-mission" class="big ghost" style="display:none">RESTART MISSION</button>
+    <button id="btn-quit" class="big ghost">QUIT TO TITLE</button>
+    <div id="pause-save-note"></div>
+  </div>
+</div>
+
+<!-- ============ BUSTED / WASTED / FAILED ============ -->
+<div id="overlay-busted" class="overlay" style="display:none">
+  <div class="overlay-title blue">BUSTED</div>
+  <div id="busted-note" class="overlay-note"></div>
+  <button id="btn-busted-ok" class="big">WALK FREE</button>
+</div>
+<div id="overlay-wasted" class="overlay" style="display:none">
+  <div class="overlay-title red">WASTED</div>
+  <div id="wasted-note" class="overlay-note"></div>
+  <button id="btn-wasted-ok" class="big">WAKE UP</button>
+</div>
+<div id="overlay-failed" class="overlay" style="display:none">
+  <div class="overlay-title amber">MISSION FAILED</div>
+  <div id="failed-reason" class="overlay-note"></div>
+  <button id="btn-retry" class="big">RETRY MISSION</button>
+  <button id="btn-freeroam" class="big ghost">FREE ROAM</button>
+</div>
+
 <script type="module" src="./src/main.js"></script>
 </body>
 </html>
